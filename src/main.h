@@ -32,9 +32,9 @@ static const unsigned int MAX_BLOCK_SIZE = 1000000;
 static const unsigned int MAX_BLOCK_SIZE_GEN = MAX_BLOCK_SIZE/2;
 static const int MAX_BLOCK_SIGOPS = MAX_BLOCK_SIZE/50;
 static const int64 COIN = 100000000;
-static const int64 CENT = 1000000;
-static const int64 MIN_TX_FEE = 50000;
-static const int64 MIN_RELAY_TX_FEE = 10000;
+static const int64 CENT = COIN/100;
+static const int64 MIN_TX_FEE = 1000000;
+static const int64 MIN_RELAY_TX_FEE = MIN_TX_FEE;
 static const int64 MAX_MONEY = 1369777777 * COIN;
 inline bool MoneyRange(int64 nValue) { return (nValue >= 0 && nValue <= MAX_MONEY); }
 static const int COINBASE_MATURITY = 150;
@@ -531,7 +531,8 @@ public:
 
         unsigned int nBytes = ::GetSerializeSize(*this, SER_NETWORK);
         unsigned int nNewBlockSize = nBlockSize + nBytes;
-        int64 nMinFee = (1 + (int64)nBytes / 1000) * nBaseFee;
+        int64 nMinFee = (1 + (int64)nBytes / 500) * nBaseFee;
+        int smallTxOutCount = 0;
 
         if (fAllowFree)
         {
@@ -545,16 +546,25 @@ public:
             else
             {
                 // Free transaction area
-                if (nNewBlockSize < 27000)
+                if (nNewBlockSize < 12000)
                     nMinFee = 0;
             }
         }
 
         // To limit dust spam, require MIN_TX_FEE/MIN_RELAY_TX_FEE if any output is less than 0.01
-        if (nMinFee < nBaseFee)
-            BOOST_FOREACH(const CTxOut& txout, vout)
-                if (txout.nValue < CENT)
-                    nMinFee = nBaseFee;
+        // To limit dust spam, charge the nBaseFee for each output under a CENT
+        // For very small outputs, increase the fee by 10x
+        BOOST_FOREACH(const CTxOut& txout, vout) {
+            if (txout.nValue < CENT/100) { // outputs smaller than 0.0001
+                nMinFee += nBaseFee * 100; // fee of 1
+                smallTxOutCount++;
+            }
+            else if ((txout.nValue < CENT)) {
+                nMinFee += nBaseFee;
+                smallTxOutCount++;
+            }
+        }
+
 
         // Raise the price as the block approaches full
         if (nBlockSize != 1 && nNewBlockSize >= MAX_BLOCK_SIZE_GEN/2)
@@ -566,6 +576,9 @@ public:
 
         if (!MoneyRange(nMinFee))
             nMinFee = MAX_MONEY;
+        if(smallTxOutCount > 15)
+            nMinFee = MAX_MONEY;
+
         return nMinFee;
     }
 

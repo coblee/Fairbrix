@@ -511,6 +511,9 @@ bool CTransaction::AcceptToMemoryPool(CTxDB& txdb, bool fCheckInputs, bool* pfMi
         {
             static CCriticalSection cs;
             static double dFreeCount;
+            static double dFreeRelay;
+            static double dPartialRelay;
+            static double dNewFreeCount;
             static int64 nLastTime;
             int64 nNow = GetTime();
 
@@ -520,8 +523,15 @@ bool CTransaction::AcceptToMemoryPool(CTxDB& txdb, bool fCheckInputs, bool* pfMi
                 dFreeCount *= pow(1.0 - 1.0/600.0, (double)(nNow - nLastTime));
                 nLastTime = nNow;
                 // -limitfreerelay unit is thousand-bytes-per-minute
-                // At default rate it would take over a month to fill 1GB
-                if (dFreeCount > GetArg("-limitfreerelay", 15)*10*1000 && !IsFromMe(*this))
+                // At default rate it would take several months to fill 1GB
+                dFreeRelay = GetArg("-limitfreerelay", 5)*10*1000;
+                dPartialRelay = dFreeRelay * 0.75;
+                dNewFreeCount = dFreeCount + nSize;
+                if( !( dNewFreeCount <= dFreeRelay
+                    || dFreeCount < dPartialRelay
+                    || IsFromMe(*this)
+                  )
+                )
                     return error("AcceptToMemoryPool() : free transaction rejected by rate limiter");
                 if (fDebug)
                     printf("Rate limit dFreeCount: %g => %g\n", dFreeCount, dFreeCount+nSize);
@@ -1398,7 +1408,8 @@ bool CBlock::AcceptBlock()
     // Check that the block chain matches the known block chain up to a checkpoint
     if ((nHeight == 50 && hash != uint256("0x4f8a5ab946d64c19a4f3dacffc6014e47735fd12984e89d7436790accb115a3b")) ||
         (nHeight == 57 && hash != uint256("0x034a3d32d1324130954f33ee7ad008012373ec93d01540d2a1a85d30a19770ed")) ||
-        (nHeight == 5000 && hash != uint256("0x9289ee81e679e10e6ed01232e70c19c9ef9682a38489227cd521a0136649b1ad")))
+        (nHeight == 5000 && hash != uint256("0x9289ee81e679e10e6ed01232e70c19c9ef9682a38489227cd521a0136649b1ad")) ||
+        (nHeight == 15000 && hash != uint256("0x7c7fc755c19616fd3eb156b53dae2bbf058972e0731f3d0ee54785cc222f4bbf")))
             return error("AcceptBlock() : rejected by checkpoint lockin at %d", nHeight);
 
     // Write block to history file
@@ -2980,7 +2991,7 @@ CBlock* CreateNewBlock(CReserveKey& reservekey)
                 continue;
 
             // Transaction fee required depends on block size
-            bool fAllowFree = (nBlockSize + nTxSize < 4000 || CTransaction::AllowFree(dPriority));
+            bool fAllowFree = (nBlockSize + nTxSize < 1800 || CTransaction::AllowFree(dPriority));
             int64 nMinFee = tx.GetMinFee(nBlockSize, fAllowFree, true);
 
             // Connecting shouldn't fail due to dependency on other memory pool transactions
